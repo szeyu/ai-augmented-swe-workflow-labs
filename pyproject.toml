@@ -1,0 +1,18 @@
+[project]
+name = "state-machine-engine"
+version = "0.1.0"
+description = "State machine engine lab project — AI-Augmented SWE Workflow course"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyparsing>=3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
