@@ -1,5 +1,6 @@
 from typing import Callable, Optional, Union
 
+from .evaluator import parse_condition
 from .models import Transition, TransitionResult
 
 
@@ -19,6 +20,14 @@ class StateMachine:
     def history(self) -> list:
         return []
 
+    @property
+    def states(self) -> set[str]:
+        result = {self._initial}
+        for t in self._transitions:
+            result.update(t.from_states)
+            result.add(t.to_state)
+        return result
+
     def transition(
         self,
         name: str,
@@ -29,23 +38,44 @@ class StateMachine:
         action: Optional[Callable] = None,
         description: str = "",
     ) -> "StateMachine":
-        if isinstance(from_state, list):
-            raise TypeError("from_state as list is not yet supported")
+        if isinstance(from_state, str):
+            from_states = [from_state]
+        else:
+            from_states = list(from_state)
 
-        self._transitions = [
-            t
-            for t in self._transitions
-            if not (t.name == name and from_state in t.from_states)
-        ]
+        if not from_states:
+            raise ValueError("from_state must not be empty")
+
+        for existing in self._transitions:
+            if existing.name != name:
+                continue
+            overlap = set(existing.from_states) & set(from_states)
+            if overlap:
+                raise ValueError(
+                    f"Transition '{name}' already registered from state(s) "
+                    f"{sorted(overlap)}"
+                )
+
+        parsed_guard = None
+        if guard is not None:
+            try:
+                parsed_guard = parse_condition(guard)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid guard for transition '{name}': {e}"
+                ) from e
 
         t = Transition(
             name=name,
-            from_states=[from_state],
+            from_states=from_states,
             to_state=to_state,
             guard=guard,
             action=action,
             description=description,
         )
+        if parsed_guard is not None:
+            t._parsed_guard = parsed_guard
+
         self._transitions.append(t)
         return self
 

@@ -1,6 +1,6 @@
 # State Machine Engine — Remaining Work Plan
 
-**Baseline (verified 2026-06-14):** `uv run pytest tests/ -v` → **26 passed, 17 failed**
+**Baseline (verified 2026-06-14):** `uv run pytest tests/ -v` → **32 passed, 11 failed** (after Phase 3)
 
 Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the current `state_machine/` implementation.
 
@@ -21,6 +21,8 @@ Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the cur
 | 2 | 6 engine tests pass | **Real** — see list below; count matches pytest output |
 | 2 | `test_guard_passes` passes accidentally | **Accurate** — guard stored but never evaluated |
 | 2 | `test_rejected_transition_not_in_history` passes trivially | **Accurate** — `history` always returns `[]` |
+| 3 | Registration hardening line refs | **Real** — `states` 23–29, normalise 41–47, overlap 49–57, guard parse 59–77 |
+| 3 | 6 registration tests pass | **Real** — `test_multi_source_from_state`, `test_multi_source_wrong_state`, `test_duplicate_transition_raises`, `test_duplicate_partial_overlap_raises`, `test_invalid_guard_raises_at_registration`, `test_states_property` |
 
 **False-positive passes (will flip when TODO phases land):**
 
@@ -35,12 +37,6 @@ Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the cur
 
 | Failing test | Phase | Notes |
 | --- | --- | --- |
-| `test_multi_source_from_state` | 3 | Blocked by `TypeError` on list `from_state` |
-| `test_multi_source_wrong_state` | 3 | Same |
-| `test_duplicate_transition_raises` | 3 | Silent overwrite today |
-| `test_duplicate_partial_overlap_raises` | 3 | Needs list `from_state` (Phase 3) |
-| `test_invalid_guard_raises_at_registration` | 3 | Guard not parsed at registration |
-| `test_states_property` | 3 | Needs list `from_state` + `states` property |
 | `test_guard_fails_state_unchanged` | 4 | State changes before guard runs |
 | `test_guard_missing_field_rejected` | 4 | Guard not evaluated |
 | `test_guard_compound` (first `send`) | 4 | Guard not evaluated |
@@ -54,7 +50,7 @@ Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the cur
 | `test_reset_to_specific_state` | 7 | `reset()` missing; **see test alignment note below** |
 | `test_guard_compound` (after `reset()`) | 7 | `reset()` missing |
 
-**Coverage:** all 17 failing engine tests map to exactly one primary TODO phase. No orphan failures.
+**Coverage:** all 11 remaining failing engine tests map to exactly one primary TODO phase. No orphan failures.
 
 ### Test / spec alignment flag
 
@@ -119,15 +115,43 @@ Partial `StateMachine` in `engine.py` supports init, single-source transition re
 - `test_rejected_transition_not_in_history` *(trivial — history stub)*
 - `test_guard_passes` *(accidental — guards not evaluated)*
 
-**Known gaps (drive TODO phases):**
+**Known gaps at Phase 2 close (superseded where noted):**
 
-- `from_state` list raises `TypeError` (`engine.py:32-33`)
-- Duplicates silently overwrite (`engine.py:35-39`) instead of raising `ValueError`
-- Guards registered but never parsed or evaluated
+- ~~`from_state` list raises `TypeError`~~ — fixed Phase 3
+- ~~Duplicates silently overwrite~~ — fixed Phase 3
+- ~~Guards not parsed at registration~~ — fixed Phase 3; evaluation deferred to Phase 4
 - Actions stored but never invoked
-- `history` property returns hard-coded `[]` (`engine.py:18-20`)
-- `can()`, `reset()`, `states` not implemented
+- `history` property returns hard-coded `[]` (`engine.py:19-21`)
+- `can()`, `reset()` not implemented
 - `send()` updates state before guard/action (not atomic)
+
+---
+
+### Phase 3 — Transition registration hardening
+
+Fail-fast registration per SPEC § Transition registration: list `from_state`, duplicate overlap detection, guard parsing at registration, and `states` property.
+
+| Item | Evidence |
+| --- | --- |
+| `parse_condition` import | `engine.py:3` |
+| `states` property (`_initial` ∪ `from_states` ∪ `to_state`) | `engine.py:23-29` |
+| Normalise `str \| list[str]` → `list[str]`; reject `[]` | `engine.py:41-47` |
+| Overlap detection on `(name, from_state)` | `engine.py:49-57` |
+| Guard parse at registration; `_parsed_guard` stored once | `engine.py:59-66`, `engine.py:76-77` |
+| `guard is None` → `_parsed_guard=None` (field default) | `models.py:13`; set only when parsed |
+
+**Evidence — 6 engine tests pass:**
+
+- `test_multi_source_from_state`
+- `test_multi_source_wrong_state`
+- `test_duplicate_transition_raises`
+- `test_duplicate_partial_overlap_raises`
+- `test_invalid_guard_raises_at_registration`
+- `test_states_property`
+
+**Spec-only checks verified:** empty `from_state=[]` → `ValueError`; invalid guard message `"Invalid guard for transition '{name}': …"`; self-transition accepted; guard AST not re-parsed on `send()`.
+
+**Remaining gaps (drive Phases 4–7):** guards parsed but not evaluated on `send()`; actions not invoked; `history` stub; `can()` / `reset()` missing; `send()` not atomic.
 
 ---
 
@@ -136,54 +160,6 @@ Partial `StateMachine` in `engine.py` supports init, single-source transition re
 Build order: registration hardening → `send()` pipeline (guard → action → state → history) → introspection.
 
 Each phase is **one commit, one file** (`state_machine/engine.py` only). Revert = `git revert <sha>`.
-
----
-
-### Phase 3 — Transition registration hardening
-
-| | |
-| --- | --- |
-| **Goal** | Fail-fast registration per SPEC § Transition registration; ARCHITECTURE § 2 registration phase |
-| **Files** | `state_machine/engine.py` |
-| **Imports** | `from .evaluator import parse_condition` |
-| **Prerequisites** | Phase 1 (evaluator) — done |
-| **Architecture** | ARCHITECTURE § 1 (registration calls `parse_condition`), § 2 registration sequence, § 3 `from_states` normalisation, `states` derivation |
-| **Revertible** | Yes — single-file diff; no model or evaluator changes |
-
-**Work:**
-
-1. Normalise `from_state: str | list[str]` → `list[str]` on `Transition.from_states`; reject `[]` with `ValueError`.
-2. Remove `TypeError` branch (`engine.py:32-33`) and silent-overwrite filter (`engine.py:35-39`).
-3. Overlap detection: raise `ValueError` when a new transition shares any `(name, from_state)` pair with an existing registration (SPEC § duplicate overlap).
-4. When `guard is not None`, call `parse_condition(guard)`; store AST on `Transition._parsed_guard`; wrap parse errors as `ValueError("Invalid guard for transition '{name}': {detail}")` where `{detail}` is `str(underlying)`.
-5. When `guard is None`, leave `_parsed_guard=None` (field default).
-6. Add `states` property: `set` of `_initial` ∪ all `from_states` ∪ all `to_state` values.
-
-**Acceptance — pytest (must pass):**
-
-| Test | Asserts |
-| --- | --- |
-| `test_multi_source_from_state` | `from_state=["draft", "submitted", "processing"]` matches from `"submitted"` |
-| `test_multi_source_wrong_state` | Multi-source transition rejected from `"delivered"` |
-| `test_duplicate_transition_raises` | Duplicate `(name, from_state)` raises `ValueError` |
-| `test_duplicate_partial_overlap_raises` | Partial overlap on list `from_state` raises `ValueError` |
-| `test_invalid_guard_raises_at_registration` | Syntactically invalid guard raises `ValueError` at registration |
-| `test_states_property` | `sm.states == {"draft", "submitted", "cancelled"}` |
-
-**Acceptance — spec-only (manual or REPL):**
-
-| Check | Expected |
-| --- | --- |
-| `sm.transition("x", from_state=[], to_state="y")` | `ValueError` (empty normalised list) |
-| Invalid guard message shape | `"Invalid guard for transition 'submit': …"` |
-| Self-transition `from_state="draft", to_state="draft"` | Accepted (no error) |
-| Guard string not re-parsed on `send()` | `_parsed_guard` set once at registration |
-
-**Verify:** `uv run pytest tests/test_engine.py -k "multi_source or duplicate or invalid_guard or states_property" -v`
-
-**Spec refs:** SPEC § Transition registration, § `states` property, § Registration and API constraints, § Rejection reason templates (registration guard).
-
----
 
 ### Phase 4 — Guard-aware `send()`
 
@@ -380,8 +356,8 @@ Implement and spot-check during Phases 4–7:
 | `reset("unknown")` → `ValueError` | 7 | REPL |
 | `can()` returns `True` when action would fail | 7 | REPL per SPEC acceptance example |
 | `history` returns shallow copy | 6 | REPL |
-| Empty `from_state=[]` → `ValueError` | 3 | REPL |
-| Registration guard message includes transition name | 3 | REPL |
+| Empty `from_state=[]` → `ValueError` | 3 | Done — `engine.py:46-47` |
+| Registration guard message includes transition name | 3 | Done — `engine.py:64-66` |
 
 ### Phase dependency graph
 
