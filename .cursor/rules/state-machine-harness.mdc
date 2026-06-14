@@ -1,0 +1,12 @@
+---
+alwaysApply: true
+---
+
+# State Machine Engine — coding conventions
+
+- Python: snake_case functions and variables; PascalCase classes
+- Registration hardening: overlapping `(name, from_state)` raises `ValueError` naming the transition
+- Guard strings: parse and validate at registration via `evaluator.parse_condition()` — never parse guard syntax inline in `engine.py`
+- Guard evaluation failures (runtime): raise `EvaluationError` from `state_machine.evaluator` (never bare `Exception`)
+- Tests: pass the current PLAN phase's existing acceptance tests — do not add new test files unless PLAN asks
+- Commit messages: conventional format (`feat:`, `fix:`, `test:`, `docs:`)
