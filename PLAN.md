@@ -23,10 +23,11 @@ Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the cur
 | 2 | `test_rejected_transition_not_in_history` passes trivially | **Accurate** — `history` always returns `[]` |
 | 3 | Registration hardening line refs | **Real** — `states` 23–29, normalise 41–47, overlap 49–57, guard parse 59–77 |
 | 3 | 6 registration tests pass | **Real** — `test_multi_source_from_state`, `test_multi_source_wrong_state`, `test_duplicate_transition_raises`, `test_duplicate_partial_overlap_raises`, `test_invalid_guard_raises_at_registration`, `test_states_property` |
+| 4 | 3 guard acceptance tests pass | **Real** — `test_guard_fails_state_unchanged`, `test_guard_missing_field_rejected`, `test_guard_passes`; guard eval at `engine.py:96-114` |
 
 **False-positive passes (will flip when TODO phases land):**
 
-- `test_guard_passes` — accepted without guard evaluation (Phase 4)
+- ~~`test_guard_passes` — accepted without guard evaluation (Phase 4)~~ — fixed Phase 4
 - `test_rejected_transition_not_in_history` — passes because history is empty; becomes a real assertion after Phase 4 + 6
 
 ### Invented files / modules
@@ -37,9 +38,9 @@ Derived from [SPEC.md](SPEC.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the cur
 
 | Failing test | Phase | Notes |
 | --- | --- | --- |
-| `test_guard_fails_state_unchanged` | 4 | State changes before guard runs |
-| `test_guard_missing_field_rejected` | 4 | Guard not evaluated |
-| `test_guard_compound` (first `send`) | 4 | Guard not evaluated |
+| `test_guard_fails_state_unchanged` | 4 | **Fixed Phase 4** |
+| `test_guard_missing_field_rejected` | 4 | **Fixed Phase 4** |
+| `test_guard_compound` (first `send`) | 4 | **Fixed Phase 4** (reset half still Phase 7) |
 | `test_action_mutates_context` | 5 | Action never invoked |
 | `test_action_error_does_not_change_state` | 5 | Action never invoked |
 | `test_history_tracks_accepted_transitions` | 6 | `_history` not implemented |
@@ -151,7 +152,27 @@ Fail-fast registration per SPEC § Transition registration: list `from_state`, d
 
 **Spec-only checks verified:** empty `from_state=[]` → `ValueError`; invalid guard message `"Invalid guard for transition '{name}': …"`; self-transition accepted; guard AST not re-parsed on `send()`.
 
-**Remaining gaps (drive Phases 4–7):** guards parsed but not evaluated on `send()`; actions not invoked; `history` stub; `can()` / `reset()` missing; `send()` not atomic.
+**Remaining gaps (drive Phases 5–7):** actions not invoked; `history` stub; `can()` / `reset()` missing; action execution deferred to Phase 5.
+
+---
+
+### Phase 4 — Guard-aware `send()`
+
+| Item | Evidence |
+| --- | --- |
+| Context dict validation before matching | `engine.py:83-90` |
+| Guard evaluation via `evaluate_parsed()` | `engine.py:96-114` |
+| State unchanged on guard fail/error | `engine.py:96-114` (no `_current` update) |
+| Updated no-match reason template | `engine.py:131` |
+| `EvaluationError` import and catch | `engine.py:3`, `engine.py:99-105` |
+
+**Evidence — 3 guard acceptance tests pass:**
+
+- `test_guard_fails_state_unchanged`
+- `test_guard_missing_field_rejected`
+- `test_guard_passes`
+
+**Spec-only checks verified:** `send("submit", None)` → `"Invalid context: context must be a dict"`; guard-fail reason template `"Guard condition not met: {guard}"`.
 
 ---
 
@@ -160,51 +181,6 @@ Fail-fast registration per SPEC § Transition registration: list `from_state`, d
 Build order: registration hardening → `send()` pipeline (guard → action → state → history) → introspection.
 
 Each phase is **one commit, one file** (`state_machine/engine.py` only). Revert = `git revert <sha>`.
-
-### Phase 4 — Guard-aware `send()`
-
-| | |
-| --- | --- |
-| **Goal** | Wire `evaluate_parsed()` into event processing; state unchanged on guard fail/error |
-| **Files** | `state_machine/engine.py` |
-| **Imports** | `from .evaluator import evaluate_parsed, EvaluationError` |
-| **Prerequisites** | Phase 3 (guards parsed at registration) |
-| **Architecture** | ARCHITECTURE § 2 event-processing branches (context check, match, guard eval, rejection templates); § 1 engine calls `evaluate_parsed()` only |
-| **Revertible** | Yes — single-file diff |
-
-**Work:**
-
-1. Refactor `send()` so `_current` is **not** updated until guard (Phase 4) and action (Phase 5) succeed.
-2. Step 1 — invalid context: if `context` is not a `dict`, return `TransitionResult(accepted=False, reason="Invalid context: context must be a dict")`.
-3. Step 2–3 — find first transition where `t.name == event` and `self._current in t.from_states`; no match → `reason="No transition '{event}' from state '{current_state}'"` (replace `engine.py:70-73` template).
-4. Step 5 — when `t._parsed_guard` is not `None`, call `evaluate_parsed(t._parsed_guard, context)`:
-   - `EvaluationError` → `accepted=False`, `reason="Guard error: {message}"`
-   - `False` → `accepted=False`, `reason="Guard condition not met: {guard}"` (`guard` = `t.guard` string)
-5. On guard pass (or no guard): defer state update to Phase 5/6; for Phase 4 alone, may temporarily accept without action/history (Phase 5/6 complete the pipeline).
-6. `send()` never raises.
-
-**Acceptance — pytest (must pass):**
-
-| Test | Asserts |
-| --- | --- |
-| `test_guard_fails_state_unchanged` | Guard `False` → rejected, `sm.current_state` unchanged |
-| `test_guard_missing_field_rejected` | Missing field → `accepted=False`, `"Guard error"` in `reason`, state unchanged |
-| `test_guard_passes` | Guard `True` → accepted **because guard evaluated** (no longer accidental) |
-
-**Acceptance — spec-only:**
-
-| Check | Expected |
-| --- | --- |
-| `sm.send("submit", None)` | `accepted=False`, `reason == "Invalid context: context must be a dict"` |
-| Guard-fail `reason` exact template | `"Guard condition not met: score > 50"` (example) |
-
-**Verify:** `uv run pytest tests/test_engine.py -k "guard" -v` (excludes `test_guard_compound` until Phase 7)
-
-**Spec refs:** SPEC § Event processing steps 1–5, § Rejection reason templates, § Error handling.
-
-**Note:** `test_rejected_transition_not_in_history` becomes meaningful once guards reject — still passes through Phase 4 (history empty); fully validated in Phase 6.
-
----
 
 ### Phase 5 — Action execution & atomic state change
 
@@ -352,7 +328,7 @@ Implement and spot-check during Phases 4–7:
 
 | Behaviour | Phase | Check |
 | --- | --- | --- |
-| `send("submit", None)` → invalid context reason | 4 | REPL |
+| `send("submit", None)` → invalid context reason | 4 | Done |
 | `reset("unknown")` → `ValueError` | 7 | REPL |
 | `can()` returns `True` when action would fail | 7 | REPL per SPEC acceptance example |
 | `history` returns shallow copy | 6 | REPL |

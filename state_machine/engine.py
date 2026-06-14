@@ -1,6 +1,6 @@
 from typing import Callable, Optional, Union
 
-from .evaluator import parse_condition
+from .evaluator import EvaluationError, evaluate_parsed, parse_condition
 from .models import Transition, TransitionResult
 
 
@@ -80,25 +80,53 @@ class StateMachine:
         return self
 
     def send(self, event: str, context: dict) -> TransitionResult:
+        if not isinstance(context, dict):
+            return TransitionResult(
+                accepted=False,
+                event=event,
+                from_state=self._current,
+                to_state=None,
+                reason="Invalid context: context must be a dict",
+            )
+
         for t in self._transitions:
-            if t.name == event and self._current in t.from_states:
-                old_state = self._current
-                self._current = t.to_state
-                return TransitionResult(
-                    accepted=True,
-                    event=event,
-                    from_state=old_state,
-                    to_state=t.to_state,
-                    transition_name=t.name,
-                )
+            if t.name != event or self._current not in t.from_states:
+                continue
+
+            if t._parsed_guard is not None:
+                try:
+                    guard_passed = evaluate_parsed(t._parsed_guard, context)
+                except EvaluationError as e:
+                    return TransitionResult(
+                        accepted=False,
+                        event=event,
+                        from_state=self._current,
+                        to_state=None,
+                        reason=f"Guard error: {e}",
+                    )
+                if not guard_passed:
+                    return TransitionResult(
+                        accepted=False,
+                        event=event,
+                        from_state=self._current,
+                        to_state=None,
+                        reason=f"Guard condition not met: {t.guard}",
+                    )
+
+            old_state = self._current
+            self._current = t.to_state
+            return TransitionResult(
+                accepted=True,
+                event=event,
+                from_state=old_state,
+                to_state=t.to_state,
+                transition_name=t.name,
+            )
 
         return TransitionResult(
             accepted=False,
             event=event,
             from_state=self._current,
             to_state=None,
-            reason=(
-                f"No matching transition for event '{event}' "
-                f"from state '{self._current}'"
-            ),
+            reason=f"No transition '{event}' from state '{self._current}'",
         )
