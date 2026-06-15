@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "generate-test-cases": {
+      "source": "clear-solutions/unit-tests-skills",
+      "sourceType": "github",
+      "skillPath": "skills/generate-test-cases/SKILL.md",
+      "computedHash": "be40cc609f954e4dee1e9838d2a7a2e8f1c7af75677069a530b8e088cb0decca"
+    },
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "computedHash": "784f0dbb7403b0f00324bce9a112f715342777a0daee7bbb7385f9c6f0a170ea"
+    }
+  }
+}
